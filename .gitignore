@@ -1,0 +1,4 @@
+__pycache__/
+.vscode
+notes.txt
+speech_util.py
