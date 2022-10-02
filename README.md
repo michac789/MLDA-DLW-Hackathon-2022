@@ -27,6 +27,9 @@ This project is created by:
 - Mobile phone activated camera for various items
 - Speech-activated mode selection
 - Multi-threading usage for asynchronous voice warnings and feedbacks
+- SSD Mobilenet COCO API Model
+
+![cocoapimodel](https://i.stack.imgur.com/g30dc.png)
 
 ### Modes
 
@@ -54,6 +57,6 @@ Please click the link below to view our other resources regarding to this projec
         pip install -r requirements.txt
     ```
 
-3. Execute `image_detection.py` file
+3. Execute `main.py` or `main.ipynb` file
 
     If you want to use an external camera, you can connect via IP Webcam Pro and edit the `url` variable when running the model. By default, it is connected to your PC / Laptop default camera. You can also toggle the `USE_SPEECH` global variable to `True` or `False`. If it is `True`, it will use speech recognition to choose and change the mode, or else it will manually prompt you for the mode input.
