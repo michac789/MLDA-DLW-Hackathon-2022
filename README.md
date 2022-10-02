@@ -42,8 +42,8 @@ This project is created by:
 Please click the link below to view our other resources regarding to this project submission.
 
 1. [Submission Website](https://devpost.com/software/fix6dsense-ai)
-2. [Demonstration Video](TODO)
-3. [Presentation Slides](TODO)
+2. [Demonstration Video](https://youtu.be/8zQXFG1x_Kw)
+3. [Presentation Slides](https://www.canva.com/design/DAFN56ozY6E/K2jhOJD56fLkplBnkPWySg/view?utm_content=DAFN56ozY6E&utm_campaign=designshare&utm_medium=link&utm_source=publishpresent)
 
 ## How To Run
 
