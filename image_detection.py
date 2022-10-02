@@ -4,13 +4,12 @@ import numpy as np
 import six.moves.urllib as urllib
 import tarfile
 import tensorflow as tf
-import speech_recognition as sr
 import cv2
 import pyttsx3
-from utils import label_map_util
 from utils import visualization_utils as vis_util
 import threading
 import time
+import speech_recognition as sr
 
 
 # choosing model and dataset to use
@@ -34,9 +33,42 @@ else:
 	print('Model already exists :D')
 
 # loading the label
-label_map = label_map_util.load_labelmap(LABEL_PATH)
-categories = label_map_util.convert_label_map_to_categories(label_map, use_display_name=True, max_num_classes = 90)
-category_index = label_map_util.create_category_index(categories)
+def read_label_map(label_map_path, default_priority = 3, default_width = 0.1):
+    items = {}
+    with open(label_map_path, "r") as file:
+        
+        item_id = None
+        item_name = None
+        item_priority = default_priority
+        item_width = default_width
+
+        for line in file:
+            line.replace(" ", "")
+            if "item{" in line:
+                pass
+            elif  "}" in line:
+                items[item_id] = {'id':item_id,
+                                  'name':item_name,
+                                  'priority':item_priority,
+                                  'width':item_width}
+                item_id = None
+                item_name = None
+                item_priority = default_priority
+                item_width = default_width
+            elif "id:" in line:
+                item_id = int(line.split(":", 1)[1].strip())
+            elif "name:" in line:
+                item_name = line.split(":", 1)[1].replace('"', "").strip()
+            elif "priority:" in line:
+                item_priority = int(line.split(":", 1)[1].strip())
+            elif "width:" in line:
+                item_width = float(line.split(":", 1)[1].strip())
+    return items
+
+object_dict = read_label_map(LABEL_PATH)
+object_names = []
+for e in object_dict:
+    object_names.append(object_dict[e]['name'])
 
 # loading the model
 graph = tf.Graph()
@@ -46,62 +78,6 @@ with graph.as_default():
         serialized_graph = f.read()
         graph_def.ParseFromString(serialized_graph)
         tf.import_graph_def(graph_def, name='')
-
-# setting object priority
-object_dict = {}
-object_names = []
-vehicles = ['car', 'bus', 'truck']
-for i in range(len(categories)):
-    object_names.append(categories[i]['name'])
-    name = categories[i]['name']
-    if name in vehicles:
-        categories[i]['priority'] = 1
-    elif name == 'person':
-        categories[i]['priority'] = 2
-    else:
-        categories[i]['priority'] = 3
-    new_object = {'name':categories[i]['name'],'id':categories[i]['id'],'priority':categories[i]['priority']}
-    object_dict[categories[i]['id']] = new_object
-    
-# utility function to speak messages using a seperate thread
-def create_thread(message, INIT_NUM_THREAD, engine, wait = 0.1):
-    if len(threading.enumerate()) <= INIT_NUM_THREAD:
-        say = threading.Thread(target = engine.say, args = (message,))
-        run = threading.Thread(target = engine.runAndWait)
-        wait = threading.Thread(target = time.sleep(wait))
-        say.start()
-        run.start()
-        wait.start()
-
-# utility function to perform main operation
-def calc_dist(image_np, object, boxes, scores, detected, mode, confident_cutoff = 0.6):
-    if scores[0][i] >= confident_cutoff:
-        # append 'detected' list
-        if mode == 'aware' or mode == 'search':
-            detected.append(object)
-        
-        # calculate distance
-        mid_x = (boxes[0][i][1] + boxes[0][i][3]) / 2
-        mid_y = (boxes[0][i][0] + boxes[0][i][2]) / 2
-        apx_distance = round(((1 - (boxes[0][i][3] - boxes[0][i][1])) ** 4), 1)
-        
-        # display text (mode) on screen
-        cv2.putText(image_np, '{}'.format(apx_distance),
-                    (int(mid_x * 800), int(mid_y * 450)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-        
-        # display warning if object is in a very close distance
-        if apx_distance <= 0.5:
-            if mid_x > 0.3 and mid_x < 0.7:
-                if mode == 'warn':
-                    detected.append(object)
-                cv2.putText(image_np, 'WARNING!!!', (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255), 3)
-    return image_np
-
-# utility function to gently close the program
-def quit(cap):
-    cv2.destroyAllWindows()
-    cap.release()
 
 # utility class to handle speech recognition
 class SpeechRecognizer():
@@ -131,16 +107,60 @@ class SpeechRecognizer():
         print(message)
         response = self.hear()
         return response["transcription"]
+    
+# creating a new thread for the engine voice message
+def create_thread(message, INIT_NUM_THREAD, engine, wait = 0.1):
+    if len(threading.enumerate()) <= INIT_NUM_THREAD:
+        say = threading.Thread(target = engine.say, args = (message,))
+        run = threading.Thread(target = engine.runAndWait)
+        end = threading.Thread(target = engine.endLoop)
+        wait = threading.Thread(target = time.sleep(wait))
+        say.start()
+        run.start()
+        end.start()
+        wait.start()
+
+# depth perception calculations
+def calc_dist(image_np, index, object, boxes, scores, detected, mode, confident_cutoff = 0.6, dist_0 = 1):
+    if scores[0][index] >= confident_cutoff:
+        mid_x = (boxes[0][index][1]+boxes[0][index][3]) / 2
+        mid_y = (boxes[0][index][0]+boxes[0][index][2]) / 2
+        perceived_width = abs(boxes[0][index][3] - boxes[0][index][1])
+        scale = object['width'] / perceived_width
+        apx_distance = dist_0 * scale
+        apx_distance = round(apx_distance, 1)
+        object['distance'] = apx_distance
+
+        if mode == 'aware' or mode == 'search':
+            detected.append(object)
+
+        cv2.putText(image_np, '{} m'.format(apx_distance), (
+            int(mid_x * 800), int(mid_y * 450)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+        
+        if apx_distance <= 1:
+            if mode == 'warn':                    
+                detected.append(object)
+                cv2.putText(image_np, 'WARNING!!!', (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255), 3)
+    return image_np
+
+# utility function to gently close the program
+def quit(cap):
+    cv2.destroyAllWindows()
+    cap.release()
 
 
 # running the model...
-url = "http://10.27.234.91:8080/video"
-cap = cv2.VideoCapture(url)
+IP = '0.0.0.0' # for mobile connection, change ip here
+url = 'http://' + IP + ':8080/video'
+cap = cv2.VideoCapture(0)
 engine = pyttsx3.init()
 
-AVAILABLE_MODES = ['aware', 'warn', 'search']
+AVAILABLE_MODES = ['aware','warn','search']
 INIT_NUM_THREAD = len(threading.enumerate())
-USE_SPEECH = True # toggle this to use speech recognition
+USE_SPEECH = False # toggle this to use speech recognition
+SEARCH_LOOP_FRAMES = 100
+QUIT_DELAY = 50
 
 # utility function to choose mode based on speech recognition
 def choose_mode():
@@ -158,37 +178,26 @@ def choose_mode():
             chosen_mode = input("Enter mode: ")
     return chosen_mode, mode_input
 
+mode, transcripts = choose_mode()
+
 with graph.as_default():
     with tf.compat.v1.Session(graph=graph) as sess:
-        create_thread('Starting camera, choose your mode', INIT_NUM_THREAD, engine) 
         
-        # initialize looping variables
-        iterator, temp = 80, 0
+        # Initialize looping variables
+        iterator = 0
         input_search = True
         search_item = None
         detected = []
-        mode = None
-        
-        # choose mode
-        create_thread('Choose your mode', INIT_NUM_THREAD, engine)
-        mode, transcripts = choose_mode()
-        create_thread(f'Entering {mode} mode...', INIT_NUM_THREAD, engine)
+        quit_counter = 0
 
         while True:
             # stopping the program when 'q' is pressed
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 quit(cap)
                 break
-            
-            # choose mode when 'c' is pressed
-            if cv2.waitKey(1) & 0xFF == ord('c'):
-                print("Switch mode")
-                create_thread(f'Switch mode...', INIT_NUM_THREAD, engine)
-                mode, transcripts = choose_mode()
 
             # initialize the graph
             return_value, image_np = cap.read()
-            ret,image_np = cap.read()
             image_np_expanded = np.expand_dims(image_np, axis=0)
             image_tensor = graph.get_tensor_by_name('image_tensor:0')
             boxes = graph.get_tensor_by_name('detection_boxes:0')
@@ -197,7 +206,7 @@ with graph.as_default():
             num_detections = graph.get_tensor_by_name('num_detections:0')
             (boxes, scores, classes, num_detections) = sess.run(
                 [boxes, scores, classes, num_detections],
-                feed_dict={image_tensor: image_np_expanded})
+                feed_dict = {image_tensor: image_np_expanded})
 
             # visualizing the detection
             vis_util.visualize_boxes_and_labels_on_image_array(
@@ -205,15 +214,19 @@ with graph.as_default():
                 np.squeeze(boxes),
                 np.squeeze(classes).astype(np.int32),
                 np.squeeze(scores),
-                category_index ,
+                object_dict,
                 use_normalized_coordinates=True,
-                line_thickness=8)
+                line_thickness=5)
 
             # list objects detected
             detected.clear()
             for i, b in enumerate(boxes[0]):
-                image_np = calc_dist(image_np, object_dict[classes[0][i]], boxes, scores, detected, mode = mode)
-                detected_object_list = [d['name'] for d in sorted(detected, key = lambda x: x['priority'])]
+                image_np = calc_dist(image_np, i, object_dict[classes[0][i]], boxes, scores, detected, mode = mode)
+                object_distance = {d['name']:d['distance'] for d in sorted(detected, key = lambda x: x['priority'])}
+            
+            object_found = []
+            for e in object_distance:
+                object_found.append(e)
 
             # add mode title
             cv2.putText(image_np, f'{mode.capitalize()} Mode', (400,50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,0), 3)
@@ -221,47 +234,47 @@ with graph.as_default():
             # mode selection
             if mode == 'aware':
                 NO_TOP_PICKS = 3
-                print(detected_object_list)
-                create_thread(' '.join(detected_object_list[:NO_TOP_PICKS]), INIT_NUM_THREAD, engine) 
+                create_thread(' '.join(object_found[:NO_TOP_PICKS]), INIT_NUM_THREAD, engine) 
 
             elif mode == 'warn':
-                #say = threading.Thread(target = engine.say, args = (message,))
-                if len(detected_object_list) == 1:
-                    create_thread(f'Warning, {detected_object_list[0]} very close', INIT_NUM_THREAD, engine)
+                if len(object_found) != 0:
+                    create_thread(f'Warning, {object_found[0]} very close', INIT_NUM_THREAD, engine)
 
             elif mode == 'search':
                 # determine search item
                 if input_search == True:
-                    # search based on the object that the user has said
-                    object_names = [val["name"] for _, val in object_dict.items()]
-                    for name in object_names:
-                        if name in transcripts:
-                            search_item = name
+                    if USE_SPEECH:
+                        # search based on the object that the user has said
+                        for name in object_names:
+                            if name in transcripts:
+                                search_item = name
                     
                     # prompt the user for what item to search (if user does not mention it yet)
                     if not search_item:
                         search_item = input("Enter search item: ")
                         while search_item not in object_names:
                             search_item = input("Enter search item: ")
-                        create_thread(f"Searching for {search_item}", INIT_NUM_THREAD, engine)
+                    
+                    create_thread(f"Searching for {search_item}", INIT_NUM_THREAD, engine)
                 input_search = False
                 
-                # check if search_item is in the detected_object_list, exit program when found
-                found = search_item in detected_object_list
-                if found: temp += 1
-                elif temp >= 1:
-                    create_thread(f"{search_item} found! Exiting search mode.", INIT_NUM_THREAD, engine)
-                    temp += 1
-                if temp == 50:
+                # check if search_item is in the object_found, exit program when found
+                # quit counter to delay the quitting
+                found = search_item in object_found
+                if found and quit_counter==0: 
+                    create_thread(f"{search_item} found {object_distance[search_item]} meters away! Exiting search mode.", INIT_NUM_THREAD, engine)
+                    quit_counter = 1
+                elif quit_counter >= 1:
+                    quit_counter += 1
+                if quit_counter == 50:
                     quit(cap)
                     break
-                
+
                 # periodically say the item currently being searched every LOOP_FRAMES times
-                LOOP_FRAMES = 100
                 iterator += 1
-                if iterator == LOOP_FRAMES:
+                if iterator == SEARCH_LOOP_FRAMES:
                     create_thread(f"Still searching for {search_item}", INIT_NUM_THREAD, engine)
                     iterator = 0
 
             # Show the image
-            cv2.imshow('image', cv2.resize(image_np, (1024, 768)))
+            cv2.imshow('image',cv2.resize(image_np,(1024,768)))
