@@ -31,7 +31,7 @@ This project is created by:
 
 ![cocoapimodel](https://i.stack.imgur.com/g30dc.png)
 
-### Modes
+### Modes 
 
 - Aware mode: continuously speak out loud 3 items with the topmost priority
 - Warn mode: only shout out warnings if any item is too close based on priority
